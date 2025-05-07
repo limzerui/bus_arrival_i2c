@@ -1,6 +1,8 @@
 # Bus Arrival OLED Display for Raspberry Pi
 
 I made this project to help make it easier to check bus timings in the morning. Things are always rushed, and my dad depends on the bus to get around. I thought it’d be cool to do something useful with a Raspberry Pi and a small I2C display—just a simple screen to show when the next buses are coming.
+![Untitled](https://github.com/user-attachments/assets/bef92032-cfd0-4f98-954a-485891ea7ebf)
+![Untitled (2)](https://github.com/user-attachments/assets/3c834fa0-d9c1-4a1e-96e2-79438477f3ee)
 
 ## Hardware Requirements
 
