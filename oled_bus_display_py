@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+import time
+import requests
+from datetime import datetime
+import Adafruit_GPIO as GPIO
+import Adafruit_SSD1306
+from PIL import Image, ImageDraw, ImageFont
+import math
+
+GPIO.Platform.platform_detect = lambda: 1
+
+# Insert credentials
+ACCOUNT_KEY = ""
+UNIQUE_USER_ID = ""
+
+# Bus stop code for the bus stop you want to monitor
+BUS_STOP_CODE = ''
+
+# Define OLED display parameters
+OLED_WIDTH = 128
+OLED_HEIGHT = 64
+OLED_I2C_ADDRESS = 0x3C  # The I2C address of your display
+
+# Initialize the display (RST pin is not used on I2C displays)
+disp = Adafruit_SSD1306.SSD1306_128_64(rst=None, i2c_address=OLED_I2C_ADDRESS)
+
+# Initialize the display
+disp.begin()
+disp.clear()
+disp.display()
+
+# Create blank image for drawing
+image = Image.new('1', (OLED_WIDTH, OLED_HEIGHT))
+draw = ImageDraw.Draw(image)
+
+# Load fonts
+try:
+    font = ImageFont.truetype('DejaVuSansMono', 10)
+    font_bold = ImageFont.truetype('DejaVuSansMono-Bold', 12)
+except IOError:
+    # Fallback to default
+    font = ImageFont.load_default()
+    font_bold = ImageFont.load_default()
+
+def draw_bus(draw, x, y, size=10):
+    # Bus body
+    draw.rectangle((x, y, x + size*2, y + size), outline=255, fill=0)
+    
+    # Bus windows
+    window_size = size // 3
+    draw.rectangle((x + 2, y + 2, x + window_size*2, y + window_size), outline=255, fill=0)
+    draw.rectangle((x + window_size*2 + 2, y + 2, x + size*2 - 2, y + window_size), outline=255, fill=0)
+    
+    # Wheels
+    wheel_size = size // 4
+    draw.ellipse((x + wheel_size, y + size, x + wheel_size*2, y + size + wheel_size), outline=255, fill=0)
+    draw.ellipse((x + size + wheel_size, y + size, x + size + wheel_size*2, y + size + wheel_size), outline=255, fill=0)
+
+def draw_moving_bus(draw, frame, size=10):
+    # Calculate x position based on frame
+    max_x = OLED_WIDTH + size*2
+    x = (frame * 4) % max_x
+    if x > OLED_WIDTH:
+        x = OLED_WIDTH - (x - OLED_WIDTH)  # Reverse direction
+    
+    # Draw the bus
+    draw_bus(draw, x - size*2, 0, size)
+
+def fetch_bus_arrival_data():
+    """Fetch bus arrival data from LTA API"""
+    headers = {
+        'AccountKey': ACCOUNT_KEY,
+        'UniqueUserID': UNIQUE_USER_ID,
+        'accept': 'application/json'
+    }
+    
+    params = {'BusStopCode': BUS_STOP_CODE}
+    
+    try:
+        response = requests.get(
+            'https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival', 
+            headers=headers, 
+            params=params
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"API Error: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"Request failed: {e}")
+        return None
+
+def format_arrival_time(arrival_time):
+    if not arrival_time:
+        return "No data"
+    
+    try:
+        arrival_dt = datetime.strptime(arrival_time, '%Y-%m-%dT%H:%M:%S%z')
+        time_diff = arrival_dt - datetime.now(arrival_dt.tzinfo)
+        minutes = max(0, int(time_diff.total_seconds() / 60))
+        
+        if minutes == 0:
+            return "Arriving"
+        else:
+            return f"{minutes} min"
+    except Exception as e:
+        print(f"Time formatting error: {e}")
+        return "Error"
+
+def main():
+    print("Starting OLED Bus Arrival Display")
+    print("Press CTRL+C to exit")
+    
+    frame = 0
+    last_api_call = 0
+    bus_data = None
+    last_update_time = "N/A"
+    
+    try:
+        while True:
+            current_time = time.time()
+            
+            # Fetch new data every 30 seconds
+            if current_time - last_api_call >= 30 or bus_data is None:
+                print("Fetching new bus data...")
+                data = fetch_bus_arrival_data()
+                if data:
+                    bus_data = data
+                    last_update_time = datetime.now().strftime("%H:%M:%S")
+                last_api_call = current_time
+            
+            # Clear the display
+            draw.rectangle((0, 0, OLED_WIDTH, OLED_HEIGHT), outline=0, fill=0)
+            
+            # Draw animated bus at the top
+            draw_moving_bus(draw, frame, size=12)
+            
+            # Draw bus data
+            y_position = 18  # Start below the animated bus
+            
+            if bus_data:
+                services = bus_data.get('Services', [])
+                
+                if not services:
+                    draw.text((0, y_position), "No buses available", font=font, fill=255)
+                else:
+                    # Show up to 4 buses
+                    for i, service in enumerate(services[:4]):
+                        service_no = service['ServiceNo']
+                        next_bus = format_arrival_time(service['NextBus']['EstimatedArrival'])
+                        
+                        bus_line = f"Bus {service_no}: {next_bus}"
+                        draw.text((0, y_position), bus_line, font=font, fill=255)
+                        y_position += 12
+            else:
+                draw.text((0, y_position), "Waiting for data...", font=font, fill=255)
+            
+            # Add last update timestamp at the bottom
+            draw.text((0, 54), f"Updated: {last_update_time}", font=font, fill=255)
+            
+            # Update the display
+            disp.image(image)
+            disp.display()
+            
+            # Update frame and wait
+            frame += 1
+            time.sleep(0.1)
+            
+    except KeyboardInterrupt:
+        # Clear the display on exit
+        disp.clear()
+        disp.display()
+        print("Display cleared. Exiting...")
+
+if __name__ == "__main__":
+    main() 
